@@ -3,34 +3,114 @@
 import { Block } from '@/lib/types';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Trash2, Link as LinkIcon, Image as ImageIcon } from 'lucide-react';
+import { GripVertical, Trash2, Plus, Link as LinkIcon, Image as ImageIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 // === CUSTOM EDITORS ===
 
-const TableConfig = ({ block, updateBlock }: any) => {
-    const onSelect = (c: number, r: number) => {
-        let table = `| ${Array(c).fill('Col').map((x, i) => `${x} ${i + 1}`).join(' | ')} |\n`;
-        table += `|${Array(c).fill('---').join('|')}|\n`;
-        for (let i = 0; i < r; i++) table += `| ${Array(c).fill(' ').join(' | ')} |\n`;
-        updateBlock(block.id, { content: table });
+function parseTableMarkdown(content: string): string[][] {
+    const lines = content.trim().split(/\r?\n/).filter(Boolean);
+    const rows: string[][] = [];
+    for (const line of lines) {
+        if (/^\|[\s\-:|]+\|$/.test(line.trim())) continue; // skip separator
+        const cells = line.split(/\s*\|\s*/).filter(c => c !== '').map(c => c.trim());
+        if (cells.length) rows.push(cells);
+    }
+    return rows.length ? rows : [['', ''], ['', '']];
+}
+
+function toMarkdown(rows: string[][]): string {
+    if (!rows.length) return '';
+    const formatRow = (cells: string[]) => '| ' + cells.join(' | ') + ' |';
+    const header = formatRow(rows[0]);
+    const sep = '|' + Array(rows[0].length).fill('---').join('|') + '|';
+    const body = rows.slice(1).map(formatRow).join('\n');
+    return [header, sep, body].join('\n');
+}
+
+const TableBlockEditor = ({ block, updateBlock, onKeyDown }: any) => {
+    const [rows, setRows] = useState<string[][]>(() =>
+        block.content ? parseTableMarkdown(block.content) : [['', ''], ['', '']]
+    );
+    useEffect(() => {
+        if (block.content) setRows(parseTableMarkdown(block.content));
+    }, [block.content]);
+
+    const save = (newRows: string[][]) => {
+        setRows(newRows);
+        updateBlock(block.id, { content: toMarkdown(newRows) });
     };
 
+    const updateCell = (ri: number, ci: number, val: string) => {
+        const next = rows.map((r, i) => {
+            if (i !== ri) return r;
+            const pad = Math.max(0, ci + 1 - r.length);
+            const padded = [...r, ...Array(pad).fill('')];
+            padded[ci] = val;
+            return padded;
+        });
+        save(next);
+    };
+
+    const maxCols = Math.max(...rows.map(r => r.length), 1);
+    const addRow = () => save([...rows, Array(maxCols).fill('')]);
+    const addCol = () => save(rows.map(r => [...r, '']));
+    const removeRow = () => rows.length > 1 && save(rows.slice(0, -1));
+    const removeCol = () => rows[0].length > 1 && save(rows.map(r => r.slice(0, -1)));
+
+    if (!block.content) {
+        return (
+            <div className="my-6 p-6 rounded-2xl border border-blue-500/20 bg-[#1e293b]/80">
+                <p className="text-slate-400 text-sm font-medium mb-4">Choose table size</p>
+                <div className="flex flex-wrap gap-3">
+                    {[2, 3, 4, 5].map(n => (
+                        <button
+                            key={n}
+                            onClick={() => {
+                                const r = Array(n).fill(null).map(() => Array(n).fill(''));
+                                r[0] = Array(n).fill(null).map((_, i) => `Col ${i + 1}`);
+                                save(r);
+                            }}
+                            className="px-5 py-3 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 font-bold rounded-xl border border-blue-500/30 transition-all"
+                        >
+                            {n}×{n}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    const normRows = rows.map(r => [...r, ...Array(maxCols - r.length).fill('')]);
+
     return (
-        <div className="bg-[#1e293b] p-4 rounded-xl border border-blue-500/20 shadow-xl flex items-center gap-3 my-4">
-            <span className="text-slate-300 font-bold text-sm tracking-wider uppercase">Select Table Size:</span>
-            {[3, 4, 5].map(size => (
-                <button key={size} onClick={() => onSelect(size, size)} className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 font-bold rounded-lg text-sm border border-blue-500/20 transition-all">
-                    {size}x{size}
-                </button>
-            ))}
-            <button onClick={() => {
-                const c = prompt('Number of columns?');
-                const r = prompt('Number of rows?');
-                if (c && r) onSelect(parseInt(c), parseInt(r));
-            }} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold rounded-lg text-sm border border-slate-500 transition-all">
-                Custom size
-            </button>
+        <div className="my-6 p-4 rounded-2xl border border-blue-500/20 bg-[#1e293b]/50" onKeyDown={e => onKeyDown(e, block.id)}>
+            <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                    <tbody>
+                        {normRows.map((row, ri) => (
+                            <tr key={ri}>
+                                {row.map((cell, ci) => (
+                                    <td key={ci} className="p-1">
+                                        <input
+                                            value={cell}
+                                            onChange={e => updateCell(ri, ci, e.target.value)}
+                                            placeholder={ri === 0 ? `Header ${ci + 1}` : ''}
+                                            className="w-full min-w-[80px] px-3 py-2 bg-slate-800/80 border border-white/10 rounded-lg text-slate-200 text-sm outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/30"
+                                        />
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-3">
+                <button onClick={addRow} className="px-3 py-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg border border-white/10">+ Row</button>
+                <button onClick={addCol} className="px-3 py-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg border border-white/10">+ Col</button>
+                <button onClick={removeRow} className="px-3 py-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg border border-white/10">− Row</button>
+                <button onClick={removeCol} className="px-3 py-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg border border-white/10">− Col</button>
+            </div>
         </div>
     );
 };
@@ -167,14 +247,26 @@ const LinkBlockEditor = ({ block, updateBlock, onKeyDown, type }: any) => {
     );
 }
 
+function getNumberIndex(blocks: Block[], blockIndex: number): number {
+    let n = 1;
+    for (let i = blockIndex - 1; i >= 0; i--) {
+        if (blocks[i].type === 'number') n++;
+        else break;
+    }
+    return n;
+}
+
 interface Props {
     block: Block;
+    blocks?: Block[];
+    blockIndex?: number;
     updateBlock: (id: string, updates: Partial<Block>) => void;
     deleteBlock: (id: string) => void;
+    onOpenAddMenu?: (blockId: string, position: { x: number; y: number }) => void;
     onKeyDown: (e: React.KeyboardEvent, id: string) => void;
 }
 
-export default function EditorBlock({ block, updateBlock, deleteBlock, onKeyDown }: Props) {
+export default function EditorBlock({ block, blocks = [], blockIndex = 0, updateBlock, deleteBlock, onOpenAddMenu, onKeyDown }: Props) {
     const {
         attributes,
         listeners,
@@ -192,6 +284,27 @@ export default function EditorBlock({ block, updateBlock, deleteBlock, onKeyDown
     };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    const renderBlockActions = () => (
+        <div className="absolute right-[-10px] top-[25px] flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 z-20 transition-opacity">
+            {onOpenAddMenu && (
+                <button
+                    onClick={(e) => {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        onOpenAddMenu(block.id, { x: rect.left, y: rect.bottom + 4 });
+                    }}
+                    className="p-2 text-slate-500 hover:text-blue-400 bg-slate-800/80 border border-white/10 hover:border-blue-500/30 rounded-xl transition-all shadow-xl backdrop-blur hover:scale-110"
+                    aria-label="Add block"
+                    title="Add block"
+                >
+                    <Plus className="w-4 h-4" />
+                </button>
+            )}
+            <button onClick={() => deleteBlock(block.id)} className="p-2 text-slate-500 hover:text-red-400 bg-slate-800/80 border border-white/10 hover:border-red-500/30 rounded-xl transition-all shadow-xl backdrop-blur hover:scale-110" aria-label="Delete block">
+                <Trash2 className="w-4 h-4" />
+            </button>
+        </div>
+    );
 
     useEffect(() => {
         if (textareaRef.current) {
@@ -233,20 +346,17 @@ export default function EditorBlock({ block, updateBlock, deleteBlock, onKeyDown
             break;
         case 'number':
             inputClass += "text-[18px] text-slate-300 pl-10 relative";
-            containerClass += "before:content-['#'] before:absolute before:left-2 before:top-2.5 before:text-blue-500 before:font-mono before:text-sm before:opacity-50";
+            containerClass += "relative";
             placeholder = "Numbered list item...";
             break;
         case 'table':
-            if (!block.content) return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><TableConfig block={block} updateBlock={updateBlock} /></div><button onClick={() => deleteBlock(block.id)} className="absolute right-[-10px] top-[25px] p-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 bg-slate-800/80 border border-white/10 rounded-xl shadow-xl backdrop-blur z-20"><Trash2 className="w-5 h-5" /></button></div>;
-            inputClass += "font-mono text-sm text-blue-300 bg-blue-900/10 p-6 rounded-2xl border border-blue-500/20";
-            containerClass += "my-6";
-            break;
+            return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><TableBlockEditor block={block} updateBlock={updateBlock} onKeyDown={onKeyDown} /></div>{renderBlockActions()}</div>;
         case 'image':
-            return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><ImageBlockEditor block={block} updateBlock={updateBlock} onKeyDown={onKeyDown} /></div><button onClick={() => deleteBlock(block.id)} className="absolute right-[-10px] top-[25px] p-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 bg-slate-800/80 border border-white/10 rounded-xl shadow-xl backdrop-blur z-20"><Trash2 className="w-5 h-5" /></button></div>;
+            return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><ImageBlockEditor block={block} updateBlock={updateBlock} onKeyDown={onKeyDown} /></div>{renderBlockActions()}</div>;
         case 'link':
         case 'prev_link':
         case 'next_link':
-            return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><LinkBlockEditor block={block} updateBlock={updateBlock} onKeyDown={onKeyDown} type={block.type} /></div><button onClick={() => deleteBlock(block.id)} className="absolute right-[-10px] top-[25px] p-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 bg-slate-800/80 border border-white/10 rounded-xl shadow-xl backdrop-blur z-20"><Trash2 className="w-5 h-5" /></button></div>;
+            return <div ref={setNodeRef} style={style} className={wrapperClass}><div className="absolute left-[-25px] top-[25px] p-2 opacity-0 group-hover:opacity-100 cursor-grab text-slate-500 hover:text-white bg-slate-800/80 border border-white/10 rounded-xl transition-all shadow-xl backdrop-blur z-20" {...attributes} {...listeners}><GripVertical className="w-5 h-5" /></div><div className={containerClass}><LinkBlockEditor block={block} updateBlock={updateBlock} onKeyDown={onKeyDown} type={block.type} /></div>{renderBlockActions()}</div>;
         case 'h3':
             inputClass += "text-3xl font-semibold text-slate-200 leading-snug mt-8 mb-3 placeholder:text-white/20 px-3";
             placeholder = "Header 3";
@@ -291,6 +401,11 @@ export default function EditorBlock({ block, updateBlock, deleteBlock, onKeyDown
             </div>
 
             <div className={containerClass}>
+                {block.type === 'number' && (
+                    <div className="absolute left-0 top-2.5 min-w-[24px] text-center px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono text-sm font-bold text-blue-400">
+                        {getNumberIndex(blocks, blockIndex)}
+                    </div>
+                )}
                 {block.type !== 'divider' && (
                     <textarea
                         ref={textareaRef}
@@ -305,13 +420,7 @@ export default function EditorBlock({ block, updateBlock, deleteBlock, onKeyDown
                 )}
             </div>
 
-            <button
-                onClick={() => deleteBlock(block.id)}
-                className="absolute right-[-10px] top-[25px] p-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 bg-slate-800/80 border border-white/10 hover:border-red-500/30 rounded-xl transition-all shadow-xl backdrop-blur z-20 hover:scale-110"
-                aria-label="Delete block"
-            >
-                <Trash2 className="w-5 h-5" />
-            </button>
+            {renderBlockActions()}
         </div>
     );
 }

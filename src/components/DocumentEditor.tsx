@@ -33,12 +33,13 @@ export default function DocumentEditor({ initialDoc, allDocs = [] }: Props) {
     const [isSaving, setIsSaving] = useState(false);
     const [mode, setMode] = useState<'edit' | 'preview'>('edit');
     const [spaceDropdownOpen, setSpaceDropdownOpen] = useState(false);
-    const [slashMenu, setSlashMenu] = useState<{ active: boolean; x: number; y: number; blockId: string | null; filter: string }>({
+    const [slashMenu, setSlashMenu] = useState<{ active: boolean; x: number; y: number; blockId: string | null; filter: string; mode: 'replace' | 'insert' }>({
         active: false,
         x: 0,
         y: 0,
         blockId: null,
-        filter: ''
+        filter: '',
+        mode: 'replace'
     });
 
     const updateDoc = (updates: Partial<Document>) => {
@@ -96,10 +97,11 @@ export default function DocumentEditor({ initialDoc, allDocs = [] }: Props) {
                 const rect = blockElement.getBoundingClientRect();
                 setSlashMenu({
                     active: true,
-                    x: rect.left + 40, // Offset for the drag handle
+                    x: rect.left + 40,
                     y: rect.bottom,
                     blockId,
-                    filter: ''
+                    filter: '',
+                    mode: 'replace'
                 });
             }
         } else if (slashMenu.active) {
@@ -129,8 +131,26 @@ export default function DocumentEditor({ initialDoc, allDocs = [] }: Props) {
     };
 
     const changeBlockType = (blockId: string, type: BlockType) => {
-        updateBlock(blockId, { type, content: doc.blocks.find(b => b.id === blockId)?.content.replace(/^\//, '') || '' });
+        const block = doc.blocks.find(b => b.id === blockId);
+        const rawContent = block?.content.replace(/^\//, '') || '';
+        const needsEmptyInit = ['table', 'image', 'link', 'prev_link', 'next_link'].includes(type);
+        const content = needsEmptyInit ? '' : rawContent;
+        updateBlock(blockId, { type, content });
         setSlashMenu(prev => ({ ...prev, active: false }));
+    };
+
+    const handleSlashMenuSelect = (type: BlockType) => {
+        if (!slashMenu.blockId) return;
+        if (slashMenu.mode === 'insert') {
+            insertBlock(slashMenu.blockId, type);
+        } else {
+            changeBlockType(slashMenu.blockId, type);
+        }
+        setSlashMenu(prev => ({ ...prev, active: false }));
+    };
+
+    const openAddMenu = (blockId: string, position: { x: number; y: number }) => {
+        setSlashMenu({ active: true, blockId, filter: '', mode: 'insert', x: position.x, y: position.y });
     };
 
     const handleDelete = async () => {
@@ -160,7 +180,7 @@ export default function DocumentEditor({ initialDoc, allDocs = [] }: Props) {
             <SlashCommandMenu
                 position={slashMenu.active ? { x: slashMenu.x, y: slashMenu.y } : null}
                 filter={slashMenu.filter}
-                onSelect={(type) => slashMenu.blockId && changeBlockType(slashMenu.blockId, type)}
+                onSelect={handleSlashMenuSelect}
                 closeMenu={() => setSlashMenu(prev => ({ ...prev, active: false }))}
             />
 
@@ -238,12 +258,15 @@ export default function DocumentEditor({ initialDoc, allDocs = [] }: Props) {
                     <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                         <SortableContext items={doc.blocks.map(b => b.id)} strategy={verticalListSortingStrategy}>
                             <div className="space-y-4">
-                                {doc.blocks.map(block => (
+                                {doc.blocks.map((block, idx) => (
                                     <div key={block.id} id={`block-${block.id}`} className='mb-2'>
                                         <EditorBlock
                                             block={block}
+                                            blocks={doc.blocks}
+                                            blockIndex={idx}
                                             updateBlock={updateBlock}
                                             deleteBlock={deleteBlock}
+                                            onOpenAddMenu={openAddMenu}
                                             onKeyDown={handleKeyDown}
                                         />
                                     </div>

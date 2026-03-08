@@ -8,6 +8,41 @@ import { Download, FileDown, FileText, Trash2, Link as LinkIcon, ArrowLeft, Arro
 import { removeDocument } from '@/app/actions';
 import { useRouter } from 'next/navigation';
 
+/** Normalize pipe-delimited content to valid GFM markdown table format */
+function normalizeTableContent(content: string): string {
+    if (!content?.trim()) return content;
+    const trimmed = content.trim();
+    // Already has GFM table separator (|---|)
+    if (/\|[-\s|:]+\|/.test(trimmed)) return trimmed;
+
+    const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return content;
+
+    const parseRow = (line: string) => line.split(/\s*\|\s*/).filter(c => c !== '');
+    const rows = lines.map(parseRow);
+
+    const colCount = rows[0]?.length ?? 0;
+    if (colCount === 0 || !rows.every(r => r.length === colCount)) {
+        // Single line with pipes - try chunking (e.g. 3, 6, 9 cells -> 3 cols)
+        const cells = parseRow(trimmed.replace(/\n/g, ' '));
+        if (cells.length >= 3 && cells.length % 3 === 0) {
+            const cols = 3;
+            const chunked: string[][] = [];
+            for (let i = 0; i < cells.length; i += cols) chunked.push(cells.slice(i, i + cols));
+            rows.length = 0;
+            rows.push(...chunked);
+        } else {
+            return content;
+        }
+    }
+
+    const formatRow = (cells: string[]) => '| ' + cells.join(' | ') + ' |';
+    const header = formatRow(rows[0]);
+    const separator = '|' + Array(rows[0].length).fill('---').join('|') + '|';
+    const body = rows.slice(1).map(formatRow).join('\n');
+    return [header, separator, body].filter(Boolean).join('\n');
+}
+
 interface Props {
     doc: Document;
 }
@@ -28,7 +63,9 @@ export default function DocumentViewer({ doc }: Props) {
             const sanitized: Record<string, string> = {};
             for (const block of doc.blocks) {
                 if (['paragraph', 'note', 'warning', 'example', 'bullet', 'number', 'table'].includes(block.type)) {
-                    const rawMarkup = await parse(block.content, { async: true });
+                    let content = block.content;
+                    if (block.type === 'table') content = normalizeTableContent(content);
+                    const rawMarkup = await parse(content, { async: true });
                     sanitized[block.id] = DOMPurify.sanitize(rawMarkup);
                 } else {
                     sanitized[block.id] = block.content;
@@ -109,8 +146,9 @@ ${tocOpen ? 'max-w-5xl' : 'max-w-6xl'}`}>
                 </div>
 
                 <div className="space-y-8 prose prose-invert prose-lg prose-blue max-w-none prose-headings:font-extrabold prose-a:text-blue-400 hover:prose-a:text-blue-300">
-                    {doc.blocks.map(block => {
+                    {doc.blocks.map((block, blockIndex) => {
                         const content = htmlContent[block.id] || block.content;
+                        const getNumberIndex = () => { let n = 1; for (let i = blockIndex - 1; i >= 0; i--) { if (doc.blocks[i].type === 'number') n++; else break; } return n; };
 
                         switch (block.type) {
                             case 'h1':
@@ -136,7 +174,7 @@ ${tocOpen ? 'max-w-5xl' : 'max-w-6xl'}`}>
                             case 'number':
                                 return (
                                     <div key={block.id} className="my-2 pl-10 relative flex items-start group">
-                                        <div className="absolute left-0 top-[6px] px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono text-[10px] text-blue-400/80 group-hover:text-blue-400 transition-colors uppercase">Step</div>
+                                        <div className="absolute left-0 top-[6px] min-w-[24px] text-center px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono text-sm font-bold text-blue-400">{getNumberIndex()}</div>
                                         <div className="text-slate-300 text-lg leading-relaxed font-light number-list" dangerouslySetInnerHTML={{ __html: content }} />
                                     </div>
                                 );
@@ -144,7 +182,7 @@ ${tocOpen ? 'max-w-5xl' : 'max-w-6xl'}`}>
                             case 'table':
                                 return (
                                     <div key={block.id} className="my-10 overflow-x-auto rounded-3xl border border-white/10 shadow-2xl bg-[#1e293b]/50 backdrop-blur-3xl overflow-hidden p-6">
-                                        <div className="prose-table:border-collapse prose-th:px-6 prose-th:py-4 prose-th:bg-blue-500/10 prose-th:text-blue-400 prose-th:font-black prose-th:uppercase prose-th:tracking-widest prose-th:text-[10px] prose-td:px-6 prose-td:py-5 prose-td:border-t prose-td:border-white/5 prose-td:text-slate-300" dangerouslySetInnerHTML={{ __html: content }} />
+                                        <div className="prose prose-invert max-w-none [&_table]:border-collapse [&_table]:w-full [&_th]:px-6 [&_th]:py-4 [&_th]:bg-blue-500/10 [&_th]:text-blue-400 [&_th]:font-black [&_th]:uppercase [&_th]:tracking-widest [&_th]:text-[10px] [&_td]:px-6 [&_td]:py-5 [&_td]:border-t [&_td]:border-white/5 [&_td]:text-slate-300" dangerouslySetInnerHTML={{ __html: content }} />
                                     </div>
                                 );
                             case 'image': {
