@@ -1,0 +1,19 @@
+{
+    "id": "1",
+    "title": "Introduction",
+    "space": "HTML",
+    "blocks": [
+        {
+            "id": "b1",
+            "type": "h1",
+            "content": "HTML Introduction"
+        },
+        {
+            "id": "b2",
+            "type": "paragraph",
+            "content": "HTML is the standard markup language for creating Web pages."
+        }
+    ],
+    "createdAt": 1772873880000,
+    "updatedAt": 1772873880000
+}
